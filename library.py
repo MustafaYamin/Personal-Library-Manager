@@ -4,43 +4,140 @@ import os
 import base64
 from urllib.parse import urlencode
 import streamlit.components.v1 as components
+import hashlib
 
-DATA_FILE = "library.json"
-PDF_FOLDER = "pdfs/"
+# Initialize folders
+if not os.path.exists("user_data"):
+    os.makedirs("user_data")
 
-if not os.path.exists(PDF_FOLDER):
-    os.makedirs(PDF_FOLDER)
+# Initialize session state
+if 'username' not in st.session_state:
+    st.session_state.username = None
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
 
-def show_pdf(pdf_path):
-    with open(pdf_path, "rb") as f:
-        base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-    pdf_display = f'''
-        <div style="width: 100%; min-width: 800px;">
-            <iframe src="data:application/pdf;base64,{base64_pdf}" 
-                    width="100%" 
-                    height="1200px" 
-                    type="application/pdf"
-                    style="border: none;">
-            </iframe>
-        </div>
-    '''
-    st.markdown(pdf_display, unsafe_allow_html=True)
+def get_user_data_path(username):
+    user_folder = f"user_data/{username}"
+    if not os.path.exists(user_folder):
+        os.makedirs(user_folder)
+    return f"{user_folder}/library.json"
+
+def get_user_pdf_folder(username):
+    pdf_folder = f"user_data/{username}/pdfs"
+    if not os.path.exists(pdf_folder):
+        os.makedirs(pdf_folder)
+    return pdf_folder
+
+def login():
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    
+    if st.button("Login"):
+        # Simple password hashing
+        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        
+        # Check if user exists
+        if os.path.exists(f"user_data/{username}/credentials.json"):
+            with open(f"user_data/{username}/credentials.json", 'r') as f:
+                stored_credentials = json.load(f)
+                if stored_credentials['password'] == hashed_password:
+                    st.session_state.username = username
+                    st.session_state.authenticated = True
+                    st.success("Login successful!")
+                    st.rerun()
+                else:
+                    st.error("Invalid password!")
+        else:
+            st.error("User does not exist!")
+
+def register():
+    username = st.text_input("Choose Username")
+    password = st.text_input("Choose Password", type="password")
+    confirm_password = st.text_input("Confirm Password", type="password")
+    
+    if st.button("Register"):
+        if password != confirm_password:
+            st.error("Passwords don't match!")
+            return
+        
+        if os.path.exists(f"user_data/{username}/credentials.json"):
+            st.error("Username already exists!")
+            return
+        
+        # Create user directory
+        os.makedirs(f"user_data/{username}", exist_ok=True)
+        os.makedirs(f"user_data/{username}/pdfs", exist_ok=True)
+        
+        # Store credentials
+        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        credentials = {'password': hashed_password}
+        with open(f"user_data/{username}/credentials.json", 'w') as f:
+            json.dump(credentials, f)
+        
+        # Initialize empty library
+        with open(get_user_data_path(username), 'w') as f:
+            json.dump([], f)
+            
+        st.success("Registration successful! Please login.")
 
 def load_library():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r') as file:
+    if not st.session_state.authenticated and not st.query_params.get("shared", False):
+        return []
+    
+    username = st.session_state.username
+    if st.query_params.get("shared", False):
+        username = st.query_params.get("user", "guest")
+    
+    data_file = get_user_data_path(username)
+    if os.path.exists(data_file):
+        with open(data_file, 'r') as file:
             return json.load(file)
     return []
 
 def save_library(library):
-    with open(DATA_FILE, 'w') as file:
+    if not st.session_state.authenticated:
+        return
+    
+    data_file = get_user_data_path(st.session_state.username)
+    with open(data_file, 'w') as file:
         json.dump(library, file, indent=4)
+
+def show_pdf(pdf_path):
+    try:
+        with open(pdf_path, "rb") as f:
+            base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+        
+        # Using a more robust PDF viewer implementation
+        pdf_display = f'''
+            <embed
+                src="data:application/pdf;base64,{base64_pdf}"
+                type="application/pdf"
+                width="100%"
+                height="1200px"
+                style="border: none;">
+            </embed>
+            <script>
+                // Ensure PDF is loaded in the viewer
+                document.addEventListener('DOMContentLoaded', function() {{
+                    var embed = document.querySelector('embed');
+                    if (embed.contentDocument && embed.contentDocument.body.innerHTML === "") {{
+                        window.location.href = "data:application/pdf;base64,{base64_pdf}";
+                    }}
+                }});
+            </script>
+        '''
+        st.markdown(pdf_display, unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Error displaying PDF: {str(e)}")
+        # Provide a direct download link as fallback
+        st.markdown(f'<a href="data:application/pdf;base64,{base64_pdf}" download="document.pdf">Download PDF</a>', unsafe_allow_html=True)
 
 def add_book(title, author, year, genre, pdf_file):
     library = load_library()
     pdf_path = None
     if pdf_file:
-        pdf_path = os.path.join(PDF_FOLDER, pdf_file.name)
+        pdf_folder = get_user_pdf_folder(st.session_state.username)
+        pdf_path = os.path.join(pdf_folder, pdf_file.name)
         with open(pdf_path, "wb") as f:
             f.write(pdf_file.getbuffer())
     
@@ -70,6 +167,9 @@ def display_books(search_term=None, search_by=None):
     if search_term and search_by:
         library = [book for book in library if search_term.lower() in book.get(search_by, "").lower()]
     
+    # Check if we're in shared view
+    is_shared = st.query_params.get("shared", False)
+    
     if library:
         for book in library:
             # Create a unique key for this book's state
@@ -92,12 +192,14 @@ def display_books(search_term=None, search_by=None):
                                 data=pdf,
                                 file_name=os.path.basename(book["pdf_path"])
                             )
-                    with col3:
-                        if st.button(
-                            "Read Book" if not st.session_state[viewer_key] else "Close Book",
-                            key=f"read_{book['title']}"
-                        ):
-                            st.session_state[viewer_key] = not st.session_state[viewer_key]
+                    # Only show Read Book button if not in shared view
+                    if not is_shared:
+                        with col3:
+                            if st.button(
+                                "Read Book" if not st.session_state[viewer_key] else "Close Book",
+                                key=f"read_{book['title']}"
+                            ):
+                                st.session_state[viewer_key] = not st.session_state[viewer_key]
                 
                 # Show PDF viewer if state is True
                 if st.session_state[viewer_key]:
@@ -110,10 +212,6 @@ def display_books(search_term=None, search_by=None):
 
 def get_shareable_link():
     base_url = "https://mustafayamin-personal-library-manager-library-tgql1g.streamlit.app"
-    
-    # Initialize username in session state if it doesn't exist
-    if 'username' not in st.session_state:
-        st.session_state.username = "guest"
     
     if st.button("Generate Shareable Link"):
         share_link = f"{base_url}?shared=true&user={st.session_state.username}"
@@ -139,47 +237,62 @@ is_shared = st.query_params.get("shared", False)
 
 if is_shared:
     # Shared view mode
-    st.header("Shared Library Collection")
+    shared_user = st.query_params.get("user", "guest")
+    st.header(f"Shared Library Collection from {shared_user}")
     display_books()
 else:
-    # Normal mode with all features
-    menu = st.sidebar.selectbox("Menu", ["Add Book", "View Books", "Search Books", "Remove Book", "Share Library"])
+    # Check authentication
+    if not st.session_state.authenticated:
+        tab1, tab2 = st.tabs(["Login", "Register"])
+        with tab1:
+            login()
+        with tab2:
+            register()
+    else:
+        # Normal mode with all features
+        menu = st.sidebar.selectbox("Menu", ["Add Book", "View Books", "Search Books", "Remove Book", "Share Library"])
+        
+        # Add logout button
+        if st.sidebar.button("Logout"):
+            st.session_state.authenticated = False
+            st.session_state.username = None
+            st.rerun()
 
-    if menu == "Add Book":
-        st.header("Add a New Book")
-        title = st.text_input("Title")
-        author = st.text_input("Author")
-        year = st.text_input("Year")
-        genre = st.text_input("Genre")
-        pdf_file = st.file_uploader("Upload Book PDF", type=["pdf"])
-        if st.button("Add Book"):
-            add_book(title, author, year, genre, pdf_file)
+        if menu == "Add Book":
+            st.header("Add a New Book")
+            title = st.text_input("Title")
+            author = st.text_input("Author")
+            year = st.text_input("Year")
+            genre = st.text_input("Genre")
+            pdf_file = st.file_uploader("Upload Book PDF", type=["pdf"])
+            if st.button("Add Book"):
+                add_book(title, author, year, genre, pdf_file)
 
-    elif menu == "View Books":
-        st.header("Library Collection")
-        display_books()
+        elif menu == "View Books":
+            st.header("Library Collection")
+            display_books()
 
-    elif menu == "Search Books":
-        st.header("Search Library")
-        search_by = st.selectbox("Search by", ["title", "author", "genre", "year"])
-        search_term = st.text_input("Enter search term")
-        if st.button("Search"):
-            display_books(search_term, search_by)
+        elif menu == "Search Books":
+            st.header("Search Library")
+            search_by = st.selectbox("Search by", ["title", "author", "genre", "year"])
+            search_term = st.text_input("Enter search term")
+            if st.button("Search"):
+                display_books(search_term, search_by)
 
-    elif menu == "Remove Book":
-        st.header("Remove a Book")
-        title = st.text_input("Enter book title to remove")
-        if st.button("Remove Book"):
-            remove_book(title)
+        elif menu == "Remove Book":
+            st.header("Remove a Book")
+            title = st.text_input("Enter book title to remove")
+            if st.button("Remove Book"):
+                remove_book(title)
 
-    elif menu == "Share Library":
-        st.header("Share Your Library")
-        st.write("Generate a shareable link to your library:")
-        get_shareable_link()
-        st.write("""
-        ### Sharing Instructions:
-        1. Click the 'Generate Shareable Link' button above
-        2. Copy the generated link
-        3. Share this link with anyone you want to give access to your library
-        4. They will be able to view and read books but cannot modify the library
-        """)
+        elif menu == "Share Library":
+            st.header("Share Your Library")
+            st.write("Generate a shareable link to your library:")
+            get_shareable_link()
+            st.write("""
+            ### Sharing Instructions:
+            1. Click the 'Generate Shareable Link' button above
+            2. Copy the generated link
+            3. Share this link with anyone you want to give access to your library
+            4. They will be able to view and read books but cannot modify the library
+            """)
