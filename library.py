@@ -171,9 +171,9 @@ def display_books(search_term=None, search_by=None):
     is_shared = st.query_params.get("shared", False)
     
     if library:
-        for book in library:
-            # Create a unique key for this book's state
-            viewer_key = f"show_pdf_{book['title']}"
+        for idx, book in enumerate(library):
+            # Create a unique key for this book's state using index
+            viewer_key = f"show_pdf_{book['title']}_{idx}"
             if viewer_key not in st.session_state:
                 st.session_state[viewer_key] = False
 
@@ -190,22 +190,21 @@ def display_books(search_term=None, search_by=None):
                             st.download_button(
                                 label="Download PDF",
                                 data=pdf,
-                                file_name=os.path.basename(book["pdf_path"])
+                                file_name=os.path.basename(book["pdf_path"]),
+                                key=f"download_{book['title']}_{idx}"
                             )
                     # Only show Read Book button if not in shared view
                     if not is_shared:
                         with col3:
                             if st.button(
                                 "Read Book" if not st.session_state[viewer_key] else "Close Book",
-                                key=f"read_{book['title']}"
+                                key=f"read_{book['title']}_{idx}"
                             ):
                                 st.session_state[viewer_key] = not st.session_state[viewer_key]
                 
-                # Show PDF viewer if state is True
                 if st.session_state[viewer_key]:
                     show_pdf(book["pdf_path"])
                 
-                # Add a separator between books
                 st.markdown("---")
     else:
         st.write("No books found in the library.")
