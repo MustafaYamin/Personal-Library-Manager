@@ -109,16 +109,27 @@ def display_books(search_term=None, search_by=None):
         st.write("No books found in the library.")
 
 def get_shareable_link():
-    base_url = "https://your-streamlit-app-url.com"  # Replace with your actual URL when deployed
+    base_url = "https://mustafayamin-personal-library-manager-library-tgql1g.streamlit.app"
+    
+    # Initialize username in session state if it doesn't exist
+    if 'username' not in st.session_state:
+        st.session_state.username = "guest"
+    
     if st.button("Generate Shareable Link"):
-        share_link = f"{base_url}?shared=true"
+        share_link = f"{base_url}?shared=true&user={st.session_state.username}"
         st.code(share_link)
-        st.markdown(f"""
-        <input type="text" value="{share_link}" id="shareLink" readonly style="width: 100%; padding: 8px;">
-        <button onclick="navigator.clipboard.writeText(document.getElementById('shareLink').value)">
-            Copy Link
-        </button>
-        """, unsafe_allow_html=True)
+        st.markdown("""
+        <div style="margin: 10px 0;">
+            <input type="text" value="{}" id="shareLink" 
+                   style="width: 100%; padding: 8px; margin-bottom: 5px;" readonly>
+            <button onclick="navigator.clipboard.writeText(document.getElementById('shareLink').value)"
+                    style="padding: 5px 10px; cursor: pointer;">
+                Copy Link
+            </button>
+        </div>
+        """.format(share_link), unsafe_allow_html=True)
+        
+        st.info("✨ Share this link with others to give them read-only access to your library!")
 
 # Main UI
 st.title("📚 Library Manager")
